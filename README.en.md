@@ -2,7 +2,7 @@
 
 > 中文版(原文):[README.md](README.md)
 >
-> **Version**: v0.5 (2026-07-17; v0.3 added MCP mechanics & calling conventions; v0.4 added §13 Runtime — Claude Agent SDK + model neutrality; v0.5 added §13.3 the Team Definition Package — agents as .md files + skills + tools/scripts + hooks)
+> **Version**: v0.6 (2026-07-17; v0.4 added §13 Runtime; v0.5 added §13.3 the Team Definition Package; v0.6 added §13.4 the Team Gateway — listing a team folder as an MCP server)
 > **What this is**: A business-neutral master rulebook for AI agent teams. Picture a company: every agent team is a **module department** — the department's line of business (the §4 slot) is plugged in later, but its management system (the 12 harness modules) never changes.
 > **How to use it**: Hand this rulebook plus a description of the business you want to an AI. Following the input template in §14 and the derivation method in §4.2, it produces a **complete team definition** (deliverables in §14.2). Changing the business never changes the system — a new team is just a filled-in configuration.
 
@@ -437,6 +437,50 @@ Hooks are how "the system never relies on good faith" becomes mechanical — **t
 | **SubagentStop** | when a Worker hands in | §6.4 summary format check: overlong, raw logs embedded, missing status/confidence → returned for rewrite |
 
 Hook scripts are always scripts (deterministic); configuration lives in `hooks/hooks.json`; the slot's guardrail policy (dangerous-operation list, risk tiers) compiles into the PreToolUse hook's matching rules.
+
+### 13.4 The Team Gateway: listing a team folder as an MCP server
+
+**In one sentence: the team folder is the definition; the Gateway is the listing machine.** The Gateway is a **business-neutral, generic program** — point it at any `team-<name>/` folder and it lists that team as an MCP server. No team writes its own server; the same Gateway fed different folders *is* different departments. Swap the folder's business and the server's tool list changes automatically — the system layer changes not one line.
+
+#### 13.4.1 Startup: compiling files into the three MCP primitives
+
+At startup the Gateway reads the definition package and generates the server interface (fully deterministic, no model involved):
+
+| Reads | Generates |
+|---|---|
+| `team.md` capability list | **Tools**: the six standard case-management tools (§6.6A) + one named tool per capability (§6.6B, parameters = the delegation-form fields) |
+| Team Charter | **Resources**: `agent-card` (service catalog) + `artifact://…` (reference reads of outputs) |
+| Delegation-form templates | **Prompts**: ready-made delegation templates for senders |
+
+Implemented with the official MCP SDKs (TypeScript `@modelcontextprotocol/sdk` or Python FastMCP).
+
+#### 13.4.2 On a call: the shell is the hands; the brain is inside
+
+Handling an incoming tool call splits strictly into two layers:
+
+```
+Inbound call (delegate_task / a named capability tool)
+  → [Deterministic layer — Gateway scripts] front half of the intake pipeline:
+     project/goal required-field check, capability scope & allowlists,
+     token verification, idempotency key
+  → only then [wake the model layer]: start the Leader via the Claude Agent SDK —
+     agents loaded from agents/*.md, tools from tools/mcp-servers.json,
+     hooks from hooks/hooks.json;
+     the Leader assigns Workers as SDK subagents
+  → Closing: the Gateway writes the case store and emits exactly one closing notice
+```
+
+**The state machine belongs to the Gateway, never to the model**: `task_id`, the case state machine (§6.3), the case store, idempotency keys, and accounting all live in the deterministic layer. `get_task_status` / `get_task_result` are pure store lookups — they wake no model, staying cheap and reliable. This is brain/hands separation at server scale: **the MCP server shell is the hands; the Leader inside the SDK is the brain.**
+
+#### 13.4.3 Transports and the registry
+
+- **Same-machine interconnect**: stdio — each team gateway is a process; a peer Leader's `mcp-servers.json` mounts it directly.
+- **Cross-machine interconnect**: Streamable HTTP — short-lived tokens ride HTTP auth; status notifications stream as events; the natural carrier for §6.7's synchronous/asynchronous modes.
+- **The registry**: the company's department directory is simply a list of MCP servers (or itself a small MCP server exposing `list_teams` / `find_team_by_capability`); listing a new team = registering its endpoint. Each Leader's client config mounts only "the registry + the teams it is authorized to deal with" — Workers still hold zero horizontal endpoints.
+
+#### 13.4.4 A shortcut for quick validation
+
+For proof-of-concept, `claude mcp serve` can turn a Claude Code instance directly into an MCP server acting as a team — working in five minutes. But the real architecture must return to the Gateway: the state machine, intake pipeline, and accounting **must live in the deterministic layer** and can never be handed wholesale to a model.
 
 ---
 
