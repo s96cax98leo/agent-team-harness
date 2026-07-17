@@ -2,7 +2,7 @@
 
 > 中文版(原文):[README.md](README.md)
 >
-> **Version**: v0.4 (2026-07-17; v0.3 added §6.5–6.7 MCP mechanics & calling conventions; v0.4 added §13 Runtime — Claude Agent SDK + model neutrality)
+> **Version**: v0.5 (2026-07-17; v0.3 added MCP mechanics & calling conventions; v0.4 added §13 Runtime — Claude Agent SDK + model neutrality; v0.5 added §13.3 the Team Definition Package — agents as .md files + skills + tools/scripts + hooks)
 > **What this is**: A business-neutral master rulebook for AI agent teams. Picture a company: every agent team is a **module department** — the department's line of business (the §4 slot) is plugged in later, but its management system (the 12 harness modules) never changes.
 > **How to use it**: Hand this rulebook plus a description of the business you want to an AI. Following the input template in §14 and the derivation method in §4.2, it produces a **complete team definition** (deliverables in §14.2). Changing the business never changes the system — a new team is just a filled-in configuration.
 
@@ -361,6 +361,83 @@ The engine is bound to the SDK; **the model layer is bound to no vendor** — th
 4. **Failover.** A provider fails or throttles → circuit breaker → the capability matrix picks the next provider (the model-level version of §11's "switch departments"); only when all fail does it escalate to humans.
 5. **Cost routing made concrete.** §10's model routing lands here — local Ollama handles the routine volume (zero API cost); strong cloud models step in only for hard cases; accounting stays in cost per successful case, avoiding "the cheap model that fails and retries costs more."
 
+### 13.3 The Team Definition Package: agents as `.md` files + skills + tools/scripts + hooks
+
+A team's entire definition is **materialized as files** in one folder — personnel files, the SOP manual, the tool-room keys, and the regulation enforcers all live inside. Plug-and-play, version-controllable, handed over as a unit.
+
+#### 13.3.1 Directory layout
+
+```
+team-<name>/
+  team.md                    # Team Charter: mission, capabilities → generates the service catalog
+  agents/
+    leader.md                # one .md definition file per agent (its job description)
+    worker-<specialty>.md    # one file per specialty, split along the §4.2 four axes
+    evaluator.md
+  skills/
+    <skill-name>/SKILL.md    # business SOP seeds (§4.1 slot), loaded on demand
+  tools/
+    mcp-servers.json         # vertical tool access (each agent mounts only its allowlist)
+    scripts/                 # deterministic scripts (the system's "hands")
+  hooks/
+    hooks.json               # event → script mapping
+    *.sh / *.py              # hook script bodies
+  golden-set/                # the acceptance test bank (§9; mechanical judgment rules)
+  memory/                    # the department archive (§5 namespaces, created at runtime)
+```
+
+#### 13.3.2 The agent definition file (`.md` = frontmatter + job description)
+
+Every agent is one Markdown file: **frontmatter defines the configuration; the body defines the duties.**
+
+```markdown
+---
+name: worker-<specialty>
+description: <one sentence saying when work should be assigned to this agent — the Leader selects by this>
+model: <per-role assignment per §13.2: claude / openai / ollama model or tier>
+tools: [<tool allowlist — the outcome of the §4.2 four-axis split; ideally under 10>]
+skills: [<loadable skill names>]
+memory_scope: <archive range this agent may consult (per §5 namespaces)>
+---
+
+# Job description (system prompt)
+
+You are the <specialty> of team <name>.
+- Duties: <what it concretely does>
+- Hard constraints: <the matching §3 constraints — e.g. Worker: no external channel,
+  deliver only structured summaries, never delegate outward past the Leader;
+  Leader: never operates business tools personally>
+- Working style: <briefing priority order, forms used, reasons before conclusions>
+```
+
+Per-role highlights: **leader.md** lists only case-management and delegation tools (no business tools at all); each **worker-\*.md** carries its own minimal four-axis allowlist, with a description stating clearly "which cases come to me"; **evaluator.md** preferably names a *different vendor's* model (§13.2, reducing same-source bias), with read-only and acceptance tools only.
+
+#### 13.3.3 Configuring skills vs. tools vs. scripts
+
+Three mechanisms, chosen by asking "what does this step need?":
+
+| The step needs | Use | Form |
+|---|---|---|
+| **Judgment** (how, when, to what standard) | Skill | `skills/<name>/SKILL.md`: name + trigger description + steps/criteria; the model learns it by reading — the slot's SOP seeds land here |
+| **External capability** (reaching systems and data) | Tool | MCP servers in `mcp-servers.json`; each agent mounts only what its frontmatter allowlist grants |
+| **Determinism** (identical every time, no model improvisation) | Script | `tools/scripts/`: format validation, duplicate checks, accounting, state-machine transitions — no model involved, testable, repeatable |
+
+The rule of thumb: **judgment → skill; capability → tool; certainty → script.** Anything that can be a script never goes to the model (the dumb-loop axiom made concrete).
+
+#### 13.3.4 Hook configuration: the system's automatic enforcement points
+
+Hooks are how "the system never relies on good faith" becomes mechanical — **the model may forget; the hook never does.** Every team ships these hooks (event names follow the Claude Agent SDK):
+
+| Hook event | Fires | System enforced |
+|---|---|---|
+| **PreToolUse** | before any tool runs | §7 sign-off: match against the dangerous-operation list → high risk blocks pending human approval; verify the tool is on this agent's allowlist; check delegation depth ≤3 and cycles |
+| **PostToolUse** | after a tool runs | §10 accounting (tokens/time booked) + §8 audit record (who, when, what, result) |
+| **SessionStart** | when an agent starts work | §3 briefing assembly (identity > tools > knowledge > progress > task) + §5 file pull by project ID |
+| **Stop** | before an agent finishes | §6 closing-report format enforcement (missing required fields → sent back) + §9 DoD self-check (fail → no sign-out) |
+| **SubagentStop** | when a Worker hands in | §6.4 summary format check: overlong, raw logs embedded, missing status/confidence → returned for rewrite |
+
+Hook scripts are always scripts (deterministic); configuration lives in `hooks/hooks.json`; the slot's guardrail policy (dangerous-operation list, risk tiers) compiles into the PreToolUse hook's matching rules.
+
 ---
 
 ## 14. How to Use This Rulebook (the Instantiation Interface)
@@ -376,18 +453,20 @@ When plugging in a business, supply as much of the following as you can (the AI 
 5. **Quality standards**: what "done well" means (how acceptance is judged)
 6. **Volume and budget** (optional): expected caseload, cost sensitivity, latency requirements
 
-### 14.2 What the AI delivers (the complete team definition)
+### 14.2 What the AI delivers (the complete team definition package)
 
-Given the configuration, the AI produces, per this rulebook:
+Given the configuration, the AI produces a **complete file package in the §13.3 format** (a folder ready to drop into the runtime), containing:
 
-1. **Team Charter + service catalog** (name / mission / capability list / external contact)
-2. **The org table**: Leader + each Worker + Evaluator with duties, tool authorization, model tier — every Worker annotated with its four-axis justification (§4.2 Steps 2/3)
-3. **The working topology**: process diagram with staged acceptance gates (§4.2 Step 4)
-4. **Delegation-form and closing-report templates** (business-specific versions of the project/goal fields)
-5. **Memory policy**: project filing scheme, retention periods per memory type
-6. **Guardrail policy**: dangerous-operation list, risk tiers, sign-off points
-7. **The Golden Set**: 10–30 cases with mechanical judgment rules
-8. **The founding checklist** (§4.3, item by item)
+1. **`team.md`**: Team Charter + service catalog (name / mission / capability list / external contact)
+2. **`agents/*.md`**: definition files for the Leader, each Worker, and the Evaluator (§13.3.2 format) — frontmatter configured with tool allowlists, models, skills, memory scope; every Worker's description carries its four-axis justification (§4.2 Steps 2/3)
+3. **The working topology**: process diagram with staged acceptance gates (§4.2 Step 4, written into team.md)
+4. **Delegation-form and closing-report templates** (business-specific versions of the project/goal fields, exposed as MCP Prompts)
+5. **`skills/`**: business SOP seeds landed as SKILL.md files (§13.3.3)
+6. **`tools/`**: MCP server configuration + the deterministic script list (§13.3.3)
+7. **`hooks/`**: the five-event hook configuration and scripts (§13.3.4) — the guardrail policy compiled into PreToolUse
+8. **Memory policy**: project filing scheme, retention periods per memory type (written into team.md)
+9. **`golden-set/`**: 10–30 cases with mechanical judgment rules
+10. **The founding checklist** (§4.3, item by item)
 
 ---
 
@@ -428,6 +507,11 @@ Given the configuration, the AI produces, per this rulebook:
 - [ ] Business appears only in the slot; changing business never changes the system
 - [ ] Every agent's existence has a four-axis justification; no justification, no split
 - [ ] Founding follows the standard process: Charter → initialization → slot → test bank → listing
+
+**Files**
+- [ ] Every agent is one `.md` definition file (frontmatter configuration + job description), packaged in the team folder
+- [ ] Hooks cover all five events: PreToolUse sign-off, PostToolUse accounting/audit, SessionStart briefing/file pull, Stop closing enforcement, SubagentStop summary gating
+- [ ] Deterministic steps are always scripts, never the model; judgment → skill, capability → tool, certainty → script
 
 ---
 
